@@ -36,7 +36,7 @@ python main_dl.py
 
 Сравнение моделей проводится по RMSE из результатов кросс-валидации.
 
-| Модель | CV Accuracy (mean) | Kaggle Accuracy |
+| Модель | CV Score | Kaggle Score |
 |---|---|---|
 | Logistic Regression (baseline) | 0.14135 | 0.20552 |
 | CatBoost | 0.13987 | 0.16004 |
