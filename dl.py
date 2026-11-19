@@ -1,0 +1,182 @@
+import copy
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
+
+from preprocessing import Preprocessor
+from config import config
+
+class MLP(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        use_batchnorm=False,
+        use_dropout=False,
+        dropout_rate=0.2,
+    ):
+        super().__init__()
+
+        layers = []
+
+        layers.append(nn.Linear(input_dim, 64, bias=not use_batchnorm))
+
+        if use_batchnorm:
+            layers.append(nn.BatchNorm1d(64))
+
+        layers.append(nn.ReLU())
+
+        if use_dropout:
+            layers.append(nn.Dropout(dropout_rate))
+
+        layers.append(nn.Linear(64, 32, bias=not use_batchnorm))
+
+        if use_batchnorm:
+            layers.append(nn.BatchNorm1d(32))
+
+        layers.append(nn.ReLU())
+
+        if use_dropout:
+            layers.append(nn.Dropout(dropout_rate))
+
+        layers.append(nn.Linear(32, 1))
+
+        self.network = nn.Sequential(*layers)
+
+
+    def forward(self, x):
+        return self.network(x).squeeze(-1)
+
+def train_model(model, train_dataset, val_dataset, device):
+    criterion = nn.MSELoss()
+
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=config.dl.learning_rate
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.dl.batch_size,
+        shuffle=True,
+        drop_last=any(
+            isinstance(layer, nn.BatchNorm1d)
+            for layer in model.modules()
+        )
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.dl.batch_size,
+        shuffle=False
+    )
+
+    best_val_loss = float('inf')
+    best_model_state = None
+    best_epoch = 0
+
+    patience = 5
+    epochs_without_improvement = 0
+
+    history = []
+
+    for epoch in range(config.dl.epochs):
+        train_loss = train_one_epoch(
+            model, train_loader, optimizer, criterion, device
+        )
+
+        val_metrics = evaluate(
+            model, val_loader, criterion, device
+        )
+
+        history.append({
+            'epoch': epoch + 1,
+            'train_loss': train_loss,
+            'val_loss': val_metrics['loss'],
+            'val_rmse': val_metrics['rmse']
+        })
+
+        print(
+            f"Epoch {epoch + 1}/{config.dl.epochs} | "
+            f"Train Loss: {train_loss:.4f} | "
+            f"Val Loss: {val_metrics['loss']:.4f} | "
+            f"Val RMSE: {val_metrics['rmse']:.4f}"
+        )
+
+        if val_metrics['loss'] < best_val_loss:
+            best_val_loss = val_metrics['loss']
+            best_model_state = copy.deepcopy(model.state_dict())
+            best_epoch = epoch + 1
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement >= patience:
+            print(f"Early stopping at epoch {epoch + 1}")
+            break
+
+    return best_model_state, history, best_epoch
+
+
+def train_one_epoch(model, dataloader, optimizer, criterion, device):
+    model.train()
+
+    total_loss = 0.0
+
+    for X_batch, y_batch in dataloader:
+        X_batch = X_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        optimizer.zero_grad()
+
+        predictions = model(X_batch)
+        loss = criterion(predictions, y_batch)
+
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item() * len(X_batch)
+
+    return total_loss / len(dataloader.dataset)
+
+@torch.no_grad()
+def evaluate(model, dataloader, criterion, device):
+    model.eval()
+
+    total_loss = 0.0
+    total_samples = 0
+
+    for X_batch, y_batch in dataloader:
+        X_batch = X_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        predictions = model(X_batch)
+        loss = criterion(predictions, y_batch)
+
+        total_loss += loss.item() * len(X_batch)
+        total_samples += len(X_batch)
+
+    mse = total_loss / total_samples
+
+    return {
+        'loss': mse,
+        'rmse': mse ** 0.5,
+    }
+
+def prepare_data(X_train, X_val, y_train, y_val):
+
+    preprocessor = Preprocessor()
+
+    X_train = preprocessor.fit_transform(X_train, y_train)
+    X_val = preprocessor.transform(X_val)
+
+    train_dataset = TensorDataset(
+        torch.tensor(X_train.to_numpy(), dtype=torch.float32),
+        torch.tensor(y_train.to_numpy(), dtype=torch.float32),
+    )
+
+    val_dataset = TensorDataset(
+        torch.tensor(X_val.to_numpy(), dtype=torch.float32),
+        torch.tensor(y_val.to_numpy(), dtype=torch.float32),
+    )
+
+    return train_dataset, val_dataset, preprocessor

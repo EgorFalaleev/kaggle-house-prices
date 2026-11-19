@@ -81,6 +81,15 @@ config = {
             'l2_leaf_reg': 3,
             'random_state': '${general.seed}'
         },
+    },
+
+    'dl': {
+        'learning_rate': 0.001,
+        'batch_size': 32,
+        'epochs': 100,
+        'use_batchnorm': True,
+        'use_dropout': False,
+        'dropout_rate': 0.2,
     }
 }
 
