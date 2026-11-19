@@ -2,7 +2,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, SGDRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from catboost import CatBoostRegressor
 from sklearn.pipeline import Pipeline
 from omegaconf import OmegaConf
 
@@ -25,13 +29,13 @@ def main() -> None:
     X_train, y_train = remove_outliers(X_train, y_train)
 
     model_params = OmegaConf.to_container(
-        config.models.linear_regression,
+        config.models.catboost,
         resolve=True
     )
 
     pipeline = Pipeline([
         ('preprocessing', Preprocessor()),
-        ('model', LinearRegression(**model_params)),
+        ('model', CatBoostRegressor(**model_params)),
     ])
 
     print('Starting training')
