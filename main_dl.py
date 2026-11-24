@@ -85,7 +85,12 @@ def main() -> None:
         'SalePrice': predictions
     })
 
-    submission_path = Path(config.paths.submission)
+    # name reflects the DL mode so it never overwrites a classic submission
+    suffix = ''.join([
+        '_bn' if config.dl.use_batchnorm else '',
+        '_dropout' if config.dl.use_dropout else '',
+    ])
+    submission_path = Path(config.paths.submissions_dir) / f'mlp{suffix}.csv'
     submission_path.parent.mkdir(parents=True, exist_ok=True)
 
     submission.to_csv(submission_path, index=False)

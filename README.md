@@ -25,6 +25,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Модель выбирается в зависимости от поля `general.model` в файле `config.py`
+
 Для Deep Learning моделей:
 ```bash
 python main_dl.py
@@ -38,14 +40,14 @@ python main_dl.py
 
 | Модель | CV Score | Kaggle Score |
 |---|---|---|
-| Logistic Regression (baseline) | 0.14135 | 0.20552 |
-| CatBoost | 0.13987 | 0.16004 |
-| XGBoost | 0.14157 | 0.16700 |
-| Random Forest | 0.15114 | 0.17425 |
-| Lasso | 0.14026 | 0.19936 |
-| Ridge | 0.13968 | 0.20581 |
-| ElasticNet | 0.13974 | 0.20625 |
-| Decition Tree | 0.19912 | 0.21502 |
-| SGD | 0.14056 | 0.22288 |
+| Linear Regression (baseline) | 0.14027 | 0.14821 |
+| Ridge | 0.13976 | 0.14697 |
+| ElasticNet | 0.13991 | 0.14699 |
+| CatBoost | 0.13891 | 0.14794 |
+| Lasso | 0.13951 | 0.14825 |
+| XGBoost | 0.14047 | 0.14939 |
+| SGD | 0.13964 | 0.15236 |
+| Random Forest | 0.15088 | 0.15865 |
+| Decition Tree | 0.19912 | 0.20792 |
 | MLP (PyTorch) | — | 0.56571 |
 

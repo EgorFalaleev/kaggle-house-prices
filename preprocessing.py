@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from config import config
 
 CATEGORICAL_FILLNA = ['PoolQC','MiscFeature','Alley','Fence','MasVnrType','FireplaceQu',
@@ -19,6 +21,7 @@ STRONG_CATEGORICAL = ['MSZoning','Neighborhood','Condition2','MasVnrType',
 ONE_HOT_FEATURES = ['OverallQual','NbHd_num','GarageCars','ExtQ_num','KiQ_num',
     'BsQ_num','FullBath','Fireplaces','MSZ_num']
 SIMILAR_FEATURES = ['GarageArea','1stFlrSF','TotRmsAbvGrd','GarageYrBlt']
+COUNT_FEATURES = ['OverallQual','GarageCars','FullBath','Fireplaces']
 
 
 def remove_outliers(
@@ -27,6 +30,11 @@ def remove_outliers(
     *,
     log_target: bool = True
 ) -> tuple[pd.DataFrame, pd.Series]:
+    """Drop known outliers (low price at top quality / very large area).
+
+    Takes features X and target y (log-prices by default) and returns copies
+    of both without the outlier rows. Apply to train data only.
+    """
     y_log = y if log_target else np.log(y)
 
     area = (
@@ -50,7 +58,12 @@ def remove_outliers(
 
 class Preprocessor(BaseEstimator, TransformerMixin):
     def fit(self, X: pd.DataFrame, y: pd.Series) -> Preprocessor:
-        self.set_numeric_means(X)
+        """Learn fill values, selected features, encoder and scaler from train.
+
+        Features are selected using the target ``y`` (correlation threshold),
+        so ``fit`` must only ever see training data.
+        """
+        self.set_fill_values(X)
 
         prepared = self.prepare(X)
 
@@ -58,12 +71,18 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         selected = self.select_features(prepared, target)
         self.selected_features = selected.columns.tolist()
 
+        self.fit_one_hot_encoder(selected)
         encoded = self.encode_features_one_hot(selected)
         self.feature_names_out = encoded.columns.tolist()
         self.fit_scaler(encoded)
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Apply the rules learned in ``fit`` to new data.
+
+        Returns a scaled DataFrame with exactly ``feature_names_out`` columns.
+        Categories unseen in train are encoded as all zeros.
+        """
         df = self.prepare(X)
         df = df.reindex(columns=self.selected_features)
         df = self.encode_features_one_hot(df)
@@ -72,6 +91,7 @@ class Preprocessor(BaseEstimator, TransformerMixin):
 
     @staticmethod
     def encode_categorical_ordinal(df: pd.DataFrame) -> pd.DataFrame:
+        """Map strong categorical columns to small ordinal codes"""
         # new_column : (source_column, default_value, mappings)
         groups = {
             'MSZ_num': ('MSZoning', 1, {2: ['RM','RH'], 3: ['RL','FV']}),
@@ -97,27 +117,47 @@ class Preprocessor(BaseEstimator, TransformerMixin):
 
     @staticmethod
     def drop_target(X: pd.DataFrame) -> pd.DataFrame:
+        """Return X without target columns, if present."""
         df_dropped = X.drop(columns=['SalePrice', 'SalePrice_Log'], errors='ignore')
 
         return df_dropped
 
-    def set_numeric_means(self, X: pd.DataFrame) -> None:
+    def set_fill_values(self, X: pd.DataFrame) -> None:
+        """Learn train fill values: column means and modes of count features."""
         df_dropped = self.drop_target(X)
         self.numeric_means = df_dropped.mean(numeric_only=True)
 
+        count_cols = [col for col in COUNT_FEATURES if col in df_dropped]
+        self.count_modes = df_dropped[count_cols].mode().iloc[0]
+
     def fill_missing_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Fill NaNs with values learned in ``fit``.
+
+        Categorical NA means "feature absent" -> 'None'. Integer count
+        features get the train mode and stay integer; other numeric columns
+        get the train mean.
+        """
         df = df.copy()
 
         for col in CATEGORICAL_FILLNA:
             if col in df:
                 df[col] = df[col].fillna('None')
 
+        for col in COUNT_FEATURES:
+            if col in df:
+                df[col] = df[col].fillna(self.count_modes[col])
+
         df = df.fillna(self.numeric_means)
+
+        for col in COUNT_FEATURES:
+            if col in df:
+                df[col] = df[col].astype(int)
 
         return df
 
     @staticmethod
     def fix_non_normal_distribution(df: pd.DataFrame) -> pd.DataFrame:
+        """Log-transform skewed area columns and drop the originals."""
         df = df.copy()
 
         df['GrLivArea_Log'] = np.log1p(df['GrLivArea'])
@@ -128,6 +168,7 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         return df
 
     def prepare(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Stateless-per-batch cleaning: fill NaNs, log-transform, ordinal-encode."""
         df = self.drop_target(X)
         df = self.fill_missing_values(df)
         df = self.fix_non_normal_distribution(df)
@@ -142,6 +183,10 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         *,
         inclusive: bool
     ) -> pd.DataFrame:
+        """Drop numeric columns whose correlation with y is below the threshold.
+
+        Uses the target, so it is called only inside fit (train data).
+        """
         correlations = df.select_dtypes(include='number').corrwith(y).abs()
 
         min_val_corr = config.general.min_val_corr
@@ -149,6 +194,7 @@ class Preprocessor(BaseEstimator, TransformerMixin):
         return df.drop(columns=correlations.index[weak])
 
     def select_features(self, prepared: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+        """Drop raw categoricals, weakly correlated and duplicate-like features."""
         # drop categorical features because we encoded them
         df = prepared.drop(
             columns=[
@@ -172,20 +218,45 @@ class Preprocessor(BaseEstimator, TransformerMixin):
 
         return df
 
-    @staticmethod
-    def encode_features_one_hot(df: pd.DataFrame) -> pd.DataFrame:
-        columns = [col for col in ONE_HOT_FEATURES if col in df]
-        encoded = pd.get_dummies(df, columns=columns, drop_first=True)
+    def fit_one_hot_encoder(self, df: pd.DataFrame) -> None:
+        """Fit the one-hot encoder once on train.
 
-        return encoded
+        Stores categories and the dropped base category (``drop='first'``);
+        unknown categories at transform time become all zeros.
+        """
+        self.one_hot_columns = [col for col in ONE_HOT_FEATURES if col in df]
+        self.encoder = OneHotEncoder(
+            drop='first',
+            handle_unknown='ignore',
+            sparse_output=False,
+            dtype=float,
+        )
+        if self.one_hot_columns:
+            self.encoder.fit(df[self.one_hot_columns].astype(int))
+
+    def encode_features_one_hot(self, df: pd.DataFrame) -> pd.DataFrame:
+        """One-hot encode with the encoder fitted in ``fit`` (no batch-dependent state)."""
+        columns = self.one_hot_columns
+        if not columns:
+            return df
+
+        encoded = pd.DataFrame(
+            self.encoder.transform(df[columns].astype(int)),
+            index=df.index,
+            columns=self.encoder.get_feature_names_out(columns),
+        )
+        return pd.concat([df.drop(columns=columns), encoded], axis=1)
 
     def fit_scaler(self, df: pd.DataFrame) -> None:
+        """Fit StandardScaler on encoded train features."""
         self.scaler = StandardScaler()
         self.scaler.fit(df.astype(float))
 
     def align_features(self, encoded: pd.DataFrame) -> pd.DataFrame:
+        """Reorder columns to the train layout (missing ones filled with 0)."""
         return encoded.reindex(columns=self.feature_names_out, fill_value=0).astype(float)
 
     def apply_scaling(self, encoded: pd.DataFrame) -> pd.DataFrame:
+        """Standardize with the scaler fitted on train."""
         values = self.scaler.transform(encoded)
         return pd.DataFrame(values, index=encoded.index, columns=encoded.columns)

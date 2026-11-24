@@ -7,6 +7,12 @@ from preprocessing import Preprocessor
 from config import config
 
 class MLP(nn.Module):
+    """Two-hidden-layer MLP.
+
+    Optional BatchNorm and Dropout after each hidden layer; forward returns
+    a 1-D tensor of predictions.
+    """
+
     def __init__(
         self,
         input_dim,
@@ -47,6 +53,7 @@ class MLP(nn.Module):
         return self.network(x).squeeze(-1)
 
 def train_model(model, train_dataset, val_dataset, device):
+    """Train with Adam + MSE and early stopping on validation loss."""
     criterion = nn.MSELoss()
 
     optimizer = torch.optim.Adam(
@@ -118,6 +125,7 @@ def train_model(model, train_dataset, val_dataset, device):
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, device):
+    """Run one training epoch; return the mean train loss."""
     model.train()
 
     total_loss = 0.0
@@ -140,6 +148,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
 
 @torch.no_grad()
 def evaluate(model, dataloader, criterion, device):
+    """Compute MSE loss and RMSE on a dataloader without gradient updates."""
     model.eval()
 
     total_loss = 0.0
@@ -163,6 +172,10 @@ def evaluate(model, dataloader, criterion, device):
     }
 
 def prepare_data(X_train, X_val, y_train, y_val):
+    """Fit a Preprocessor on train only and build tensor datasets.
+
+    Validation data is transformed with the train-fitted preprocessor.
+    """
 
     preprocessor = Preprocessor()
 

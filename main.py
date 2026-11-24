@@ -2,19 +2,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet, SGDRegressor
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
-from xgboost import XGBRegressor
-from catboost import CatBoostRegressor
-from sklearn.pipeline import Pipeline
-from omegaconf import OmegaConf
 
 from config import config
-from preprocessing import Preprocessor, remove_outliers
+from evaluation import create_pipeline, cross_validate_pipeline
+from model import MODEL_FACTORIES
+from preprocessing import remove_outliers
 
 
 def main() -> None:
+    model_name = config.general.model
+
     print('Loading data')
 
     train = pd.read_csv(config.paths.train_data)
@@ -28,17 +25,24 @@ def main() -> None:
 
     X_train, y_train = remove_outliers(X_train, y_train)
 
-    model_params = OmegaConf.to_container(
-        config.models.catboost,
-        resolve=True
+    print(f'Selected model: {model_name}')
+
+    pipeline = create_pipeline(model_name)
+
+    print(f'Cross-validation ({config.split.n_splits} folds)')
+
+    cv_result = cross_validate_pipeline(pipeline, X_train, y_train)
+
+    print(
+        'RMSE per fold:',
+        ', '.join(f'{s:.5f}' for s in cv_result['rmse_folds'])
+    )
+    print(
+        f"CV RMSE: {cv_result['rmse_mean']:.5f} "
+        f"+/- {cv_result['rmse_std']:.5f}"
     )
 
-    pipeline = Pipeline([
-        ('preprocessing', Preprocessor()),
-        ('model', CatBoostRegressor(**model_params)),
-    ])
-
-    print('Starting training')
+    print('Starting final training on the whole train set')
 
     pipeline.fit(X_train, y_train)
 
@@ -50,7 +54,7 @@ def main() -> None:
         'SalePrice': predictions,
     })
 
-    submission_path = Path(config.paths.submission)
+    submission_path = Path(config.paths.submissions_dir) / f'{model_name}.csv'
     submission_path.parent.mkdir(parents=True, exist_ok=True)
 
     submission.to_csv(submission_path, index=False)
